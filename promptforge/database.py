@@ -1,7 +1,6 @@
 """历史记录：SQLite 本地存储。"""
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import time
@@ -59,14 +58,21 @@ class Database:
         sql = "SELECT id, ts, strategy, original, enhanced, notes, favorite FROM history WHERE 1=1"
         args: list = []
         if keyword:
-            sql += " AND (original LIKE ? OR enhanced LIKE ?)"
-            args += [f"%{keyword}%", f"%{keyword}%"]
+            # LIKE 的 % 与 _ 是通配符，必须转义后再当字面量匹配，
+            # 否则搜 "100%" 会命中所有记录。配合 ESCAPE '\' 指定转义符。
+            esc = (keyword.replace("\\", "\\\\")
+                          .replace("%", "\\%")
+                          .replace("_", "\\_"))
+            sql += " AND (original LIKE ? ESCAPE '\\' OR enhanced LIKE ? ESCAPE '\\')"
+            args += [f"%{esc}%", f"%{esc}%"]
         if strategy:
             sql += " AND strategy = ?"
             args.append(strategy)
         if only_favorite:
             sql += " AND favorite = 1"
-        sql += " ORDER BY ts DESC LIMIT ?"
+        # ts 精度是秒，同秒内多条记录只按 ts 排序顺序不稳定（每次查询可能不同）。
+        # 追加 id 作为次级排序键，保证顺序确定：后插入的排前面。
+        sql += " ORDER BY ts DESC, id DESC LIMIT ?"
         args.append(limit)
         rows = self._conn.execute(sql, args).fetchall()
         return [HistoryItem(*r) for r in rows]

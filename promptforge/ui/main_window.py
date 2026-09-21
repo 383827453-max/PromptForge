@@ -1,24 +1,39 @@
 """主窗口：增强工作台 / 历史记录 / 模板库 / 设置。"""
 from __future__ import annotations
 
-import os
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStatusBar,
-    QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QStatusBar,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..config import ApiConfig, Settings, load_settings, mask_key, save_settings
-from ..database import Database, HistoryItem
+from ..database import Database
 from ..enhancer import STRATEGIES, Enhancer, strategy_label
 from ..llm_client import LLMClient, LLMError, build_endpoint
-from ..templates import (Template, add_user_template, delete_user_template,
-                         load_all, load_builtin)
+from ..templates import Template, add_user_template, delete_user_template, load_all
 from .dialogs import TemplateEditDialog, TemplateFillDialog
 from .workers import EnhanceWorker, TestWorker
 
@@ -317,10 +332,22 @@ class MainWindow(QMainWindow):
         return w
     # ---------------- 行为 ----------------
     def _apply_hotkey(self) -> None:
+        """重新绑定快捷键。
+
+        QShortcut 是 QObject，必须持有引用；旧实现每次都新建一个且不回收，
+        每保存一次设置就多注册一个同键快捷键，最终触发 N 次。
+        这里先销毁旧实例再建新的。
+        """
+        old = getattr(self, "_hotkey_sc", None)
+        if old is not None:
+            old.setEnabled(False)
+            old.setParent(None)
+            old.deleteLater()
+            self._hotkey_sc = None
         seq = QKeySequence(self.settings.hotkey)
         if not seq.isEmpty():
-            sc = QShortcut(seq, self)
-            sc.activated.connect(self._focus_input)
+            self._hotkey_sc = QShortcut(seq, self)
+            self._hotkey_sc.activated.connect(self._focus_input)
 
     def _focus_input(self) -> None:
         self.tabs.setCurrentIndex(0)
@@ -376,14 +403,19 @@ class MainWindow(QMainWindow):
         self.worker.sig_delta.connect(self._on_delta)
         self.worker.sig_done.connect(lambda r: self._on_done(r, strategy, original))
         self.worker.sig_error.connect(self._on_error)
+        self.worker.sig_cancelled.connect(self._on_cancelled)
         self.worker.start()
 
     def on_cancel(self) -> None:
+        """取消：协作式请求停止，不调用 terminate() 强杀线程。"""
         if self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait(2000)
-            self._set_running(False)
-            self.status.showMessage("已取消", 2000)
+            self.worker.request_stop()
+            self.cancel_btn.setEnabled(False)
+            self.status.showMessage("正在取消…", 2000)
+
+    def _on_cancelled(self) -> None:
+        self._set_running(False)
+        self.status.showMessage("已取消", 3000)
 
     def _on_delta(self, chunk: str) -> None:
         self._stream_buf.append(chunk)
@@ -604,7 +636,7 @@ class MainWindow(QMainWindow):
         self.settings.hotkey = self.hotkey_edit.text().strip() or "Ctrl+Alt+P"
         self.settings.theme = self.theme_combo.currentData()
         save_settings(self.settings)
-        from .app import apply_current_theme
+        from ..app import apply_current_theme
         apply_current_theme(self.settings.theme)
         self._apply_hotkey()
         self._refresh_status_profile()
@@ -644,8 +676,20 @@ class MainWindow(QMainWindow):
             self.status.showMessage("尚未配置 API，请到「设置」页填写 Base URL 与模型")
 
     def closeEvent(self, event) -> None:
-        if self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait(1500)
+        """退出：先请线程收尾，超时未退再兜底强杀。
+
+        直接 terminate() 会让线程在 requests 读写 socket 的任意位置被打断，
+        底层连接不会关闭。这里先协作式取消并给足收尾时间，只有线程确实
+        卡死（例如网关已僵死）才退化为 terminate()。
+        """
+        w = self.worker
+        if w is not None and w.isRunning():
+            w.request_stop()
+            if not w.wait(3000):
+                w.terminate()
+                w.wait(1000)
+        t = self._test_worker
+        if t is not None and t.isRunning():
+            t.wait(1500)
         self.db.close()
         event.accept()

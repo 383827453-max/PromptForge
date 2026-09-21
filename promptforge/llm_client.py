@@ -93,19 +93,29 @@ class LLMClient:
         raise LLMError(self._format_error(last_err))
 
     def _format_error(self, e: Optional[Exception]) -> str:
-        """按异常类型给出带完整请求地址的针对性诊断信息。"""
+        """按异常类型给出带完整请求地址的针对性诊断信息。
+
+        注意：SSLError / ReadTimeout 等挂在 requests.exceptions 下，
+        顶层 `requests.SSLError` 并不存在。早期实现直接引用顶层属性，
+        导致这个"错误处理函数"本身在遇到 SSL 类故障时抛 AttributeError，
+        用户看到的是 traceback 而不是诊断信息。
+        """
         url = self.endpoint
-        if isinstance(e, requests.ReadTimeout):
+        exc = requests.exceptions
+        # SSLError 是 ConnectionError 的子类，必须先判
+        if isinstance(e, exc.SSLError):
+            return f"SSL 证书错误：{url}\n若为自签名证书网关，请检查证书配置。"
+        if isinstance(e, exc.ReadTimeout):
             return (f"读取超时：{url}\n"
                     "服务器接受了连接，但没有返回有效响应。"
                     "这通常说明该地址不是 OpenAI 兼容 API 接口"
                     "（例如误填了普通网站地址），请检查 Base URL。")
-        if isinstance(e, requests.ConnectTimeout):
+        if isinstance(e, exc.ConnectTimeout):
             return f"连接超时：{url}\n请检查 Base URL 是否正确、网络或防火墙是否拦截。"
-        if isinstance(e, requests.ConnectionError):
+        if isinstance(e, exc.ConnectionError):
             return f"无法连接服务器：{url}\n请检查 Base URL 是否正确、服务是否在运行。"
-        if isinstance(e, requests.SSLError):
-            return f"SSL 证书错误：{url}\n若为自签名证书网关，请检查证书配置。"
+        if isinstance(e, exc.Timeout):
+            return f"请求超时：{url}\n请适当加大「设置」页的请求超时时间。"
         return f"请求失败：{url}\n{e}"
 
     def complete(self, system_prompt: str, timeout: Optional[int] = None,
@@ -114,48 +124,62 @@ class LLMClient:
         resp = self._post(False, system_prompt, timeout=timeout, retries=retries)
         try:
             data = resp.json()
-        except ValueError:
+        except ValueError as e:
             raise LLMError(
                 f"响应不是合法 JSON（{self.endpoint}），"
-                "请检查 Base URL 是否指向 OpenAI 兼容接口")
+                "请检查 Base URL 是否指向 OpenAI 兼容接口") from e
         try:
             return data["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError):
-            raise LLMError(f"响应结构异常: {json.dumps(data, ensure_ascii=False)[:300]}")
+        except (KeyError, IndexError) as e:
+            raise LLMError(
+                f"响应结构异常: {json.dumps(data, ensure_ascii=False)[:300]}") from e
 
     def ping(self) -> str:
         """测试连接：短超时 + 非流式 + 不重试，快速失败。"""
         return self.complete("请只回复两个字：成功", timeout=30, retries=0)
 
-    def stream(self, system_prompt: str, on_delta: Optional[Callable[[str], None]] = None) -> Iterator[str]:
-        """流式调用，逐块 yield 增量文本。"""
+    def stream(self, system_prompt: str, on_delta: Optional[Callable[[str], None]] = None,
+               should_stop: Optional[Callable[[], bool]] = None) -> Iterator[str]:
+        """流式调用，逐块 yield 增量文本。
+
+        should_stop 提供协作式取消：传入一个"返回 True 表示用户已取消"
+        的谓词，循环在每个 SSE 块之间检查并干净退出。这样取消不必依赖
+        QThread.terminate()——强杀线程会让 requests 持有的 socket 悬空、
+        finally 不执行，是间歇性崩溃与句柄泄漏的常见来源。
+        """
         resp = self._post(True, system_prompt)
-        for raw_line in resp.iter_lines(decode_unicode=True):
-            if not raw_line:
-                continue
-            line = raw_line.strip()
-            if line.startswith(":"):  # SSE 注释/心跳
-                continue
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                obj = json.loads(data)
-            except ValueError:
-                continue
-            try:
-                choice = obj["choices"][0]
-                delta = choice.get("delta", {}) or {}
-                chunk = delta.get("content") or ""
-                finish = choice.get("finish_reason")
-            except (KeyError, IndexError):
-                continue
-            if chunk:
-                if on_delta:
-                    on_delta(chunk)
-                yield chunk
-            # 检测到结束标记立即退出，避免网关不发 [DONE]/不关连接时挂起
-            if finish:
-                break
+        try:
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if should_stop is not None and should_stop():
+                    break
+                if not raw_line:
+                    continue
+                line = raw_line.strip()
+                if line.startswith(":"):  # SSE 注释/心跳
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except ValueError:
+                    continue
+                try:
+                    choice = obj["choices"][0]
+                    delta = choice.get("delta", {}) or {}
+                    chunk = delta.get("content") or ""
+                    finish = choice.get("finish_reason")
+                except (KeyError, IndexError):
+                    continue
+                if chunk:
+                    if on_delta:
+                        on_delta(chunk)
+                    yield chunk
+                # 检测到结束标记立即退出，避免网关不发 [DONE]/不关连接时挂起
+                if finish:
+                    break
+        finally:
+            # 正常结束、被取消、抛异常，都释放底层连接
+            resp.close()

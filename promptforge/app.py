@@ -30,8 +30,16 @@ def app_icon() -> QIcon:
 
 
 def apply_current_theme(name: str) -> None:
-    if _app is not None:
-        apply_theme(_app, name)
+    """应用主题。
+
+    优先用模块级 _app；但它只在 main() 里被赋值，若调用方（例如测试或
+    未来把 MainWindow 嵌进别的宿主）自己建了 QApplication，这里会静默
+    什么都不做——表现为"点保存换肤没反应"。退回 QApplication.instance()。
+    """
+    from PySide6.QtWidgets import QApplication
+    app = _app or QApplication.instance()
+    if app is not None:
+        apply_theme(app, name)
 
 
 def main() -> int:

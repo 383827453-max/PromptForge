@@ -1,5 +1,7 @@
+# 运行依赖（也可 pip install -e . 按 pyproject.toml 安装）
 PySide6>=6.5
 requests>=2.31
 
-# 打包用（可选）
+# 开发与打包（可选）
+pytest>=7.4
 pyinstaller>=6.0

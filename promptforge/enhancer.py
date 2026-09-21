@@ -4,13 +4,23 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from .config import data_dir
 from .llm_client import LLMClient
 
 STRATEGY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "strategies")
-USER_STRATEGY_DIR = os.path.join(data_dir(), "strategies")
+
+
+def user_strategy_dir() -> str:
+    """用户策略目录，运行时解析。
+
+    早期实现在 import 时就把 data_dir() 的结果算成模块常量，
+    于是 PROMPTFORGE_DATA_DIR 在导入之后才设置（或运行中改变）时，
+    用户自定义策略永远不会被读到。
+    """
+    return os.path.join(data_dir(), "strategies")
+
 
 STRATEGIES: List[Dict[str, str]] = [
     {"key": "general", "label": "通用"},
@@ -29,7 +39,7 @@ class EnhanceResult:
 
 def strategy_path(key: str) -> str:
     """用户自定义策略优先，其次内置策略。"""
-    user = os.path.join(USER_STRATEGY_DIR, key + ".md")
+    user = os.path.join(user_strategy_dir(), key + ".md")
     if os.path.exists(user):
         return user
     return os.path.join(STRATEGY_DIR, key + ".md")
@@ -61,6 +71,7 @@ def build_meta_prompt(strategy_key: str, original: str, extra_options: str = "")
 
 _TAG_RE = re.compile(r"<enhanced>(.*?)</enhanced>", re.S | re.I)
 _NOTES_RE = re.compile(r"<notes>(.*?)</notes>", re.S | re.I)
+_TAG_ONLY_RE = re.compile(r"</?(?:enhanced|notes)>", re.I)
 
 
 def parse_output(raw: str) -> EnhanceResult:
@@ -70,10 +81,13 @@ def parse_output(raw: str) -> EnhanceResult:
     n = _NOTES_RE.search(raw)
     notes = n.group(1).strip() if n else ""
     if not enhanced:
-        # 降级：去掉 notes 区块后整体作为增强结果
+        # 降级：剥掉 notes 区块与残留标签后整体作为增强结果。
+        # 只输出 <notes>（没有 <enhanced>）时，早期实现会把 "<notes>...</notes>"
+        # 整段当成增强结果，标签会被写进历史库并复制到剪贴板。
         fallback = _NOTES_RE.sub("", raw)
-        fallback = re.sub(r"^[\s`#>]+", "", fallback.strip())
-        enhanced = fallback.strip() or raw.strip()
+        fallback = _TAG_ONLY_RE.sub("", fallback)
+        fallback = re.sub(r"^[\s`#>]+", "", fallback.strip()).strip()
+        enhanced = fallback
         notes = notes or "（模型未按结构化格式输出，已原样展示）"
     return EnhanceResult(enhanced=enhanced, notes=notes, raw=raw)
 
@@ -91,9 +105,9 @@ class Enhancer:
         return parse_output(raw)
 
     def enhance_stream(self, strategy_key: str, original: str, extra_options: str,
-                       on_delta) -> EnhanceResult:
+                       on_delta, should_stop=None) -> EnhanceResult:
         meta = build_meta_prompt(strategy_key, original, extra_options)
         buf: List[str] = []
-        for chunk in self.client.stream(meta, on_delta=on_delta):
+        for chunk in self.client.stream(meta, on_delta=on_delta, should_stop=should_stop):
             buf.append(chunk)
         return parse_output("".join(buf))

@@ -124,11 +124,34 @@ promptforge/
 | 读取超时 | Base URL 大概率不是 OpenAI 兼容接口（填了普通网站地址），看错误提示里的实际请求地址 |
 | 测试连接卡 UI | 已在 `TestWorker` 后台线程执行，不应再卡；若卡请确认版本 |
 | 设置里 Key 显示为 `abcd******wxyz` | 正常，状态栏脱敏显示，实际请求用完整 Key |
+| 自定义策略/模板改了没反应 | 路径为 `%APPDATA%\PromptForge\strategies\` 与 `user_templates.json`；可用环境变量 `PROMPTFORGE_DATA_DIR` 重定向数据目录 |
+
+## 开发
+
+```bash
+pip install -e ".[dev]"     # 或 pip install -r requirements.txt
+
+python -m pytest tests -v   # 跑测试（含 offscreen GUI 冒烟）
+python -m ruff check .      # 静态检查
+python -m compileall -q promptforge tests
+```
+
+测试全部在临时数据目录里运行（`conftest.py` 自动重定向
+`PROMPTFORGE_DATA_DIR`），不会污染你的 `%APPDATA%\PromptForge`。
+GUI 用例设置 `QT_QPA_PLATFORM=offscreen`，无需显示器。
+
+CI 见 `.github/workflows/ci.yml`：Windows + Linux × Python 3.9/3.12/3.13
+矩阵跑测试，ruff 静态检查；main 分支推送时构建 exe 并做「启动后存活 12 秒」
+的冒烟验证。
 
 ## 安全提示
 
 - `settings.json` 里的 API Key 为**明文存储**，请勿把该文件提交到任何仓库（`.gitignore` 已排除）
 - 本工具只把提示词发往你自己配置的 API 地址，无任何遥测、无第三方回传
+
+## 版本历史
+
+见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License
 
