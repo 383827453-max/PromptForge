@@ -1,14 +1,10 @@
 # 运行依赖
-# 注意：本仓库是 monorepo，llmclient 是同仓库内的独立包（未发布到 PyPI），
-# 必须先从子目录安装，再装本体。
+# llmclient 是独立项目，按 tag 钉住。也可用 pyproject.toml 安装：
+#   pip install -e .
 PySide6>=6.5
 requests>=2.31
+llmclient @ git+https://github.com/383827453-max/llmclient.git@v0.1.0
 
 # 开发与打包（可选）
 pytest>=7.4
 pyinstaller>=6.0
-
-# 安装方式：
-#   pip install -e ./llmclient && pip install -e .
-# 或直接：
-#   pip install -r requirements.txt

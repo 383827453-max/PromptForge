@@ -4,6 +4,46 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-09-21
+
+`llmclient` 拆分为独立仓库。
+
+### 变更
+
+- **`llmclient` 移出本仓库**，成为独立项目：
+  **https://github.com/383827453-max/llmclient**
+  - 单一代码源，不再有「内嵌子包」与「独立发布」两份需要同步的风险
+  - 用 `git subtree split` 保留完整提交历史
+  - 独立仓库自带 CI（Linux/Windows/macOS × Python 3.9/3.12/3.13 + ruff +
+    构建 sdist/wheel + twine check + 装 wheel 验证公开 API）、LICENSE、
+    CHANGELOG、MANIFEST.in
+  - 已打 tag `v0.1.0`
+- 本仓库改为**按 tag 钉版本**的 git 依赖：
+  `llmclient @ git+https://github.com/383827453-max/llmclient.git@v0.1.0`
+  上游改动不会自动影响本应用，升级需显式改版本号
+- `promptforge/llm_client.py` 简化为纯转发层（删掉 `sys.path` 回退 hack，
+  已成为普通依赖，不再需要）
+- `PromptForge.spec` 删掉 `pathex` 与 `hiddenimports` 手工兜底
+  （llmclient 现在装在 site-packages，PyInstaller 能自动找到）
+- CI 不再需要单独安装/测试子包；改为安装后验证依赖确实解析到位
+- README 更新仓库结构、安装方式与「如何修改 LLMClient」章节
+
+### 安装方式变化
+
+```bash
+# 旧（monorepo）
+pip install -e ./llmclient && pip install -e .
+
+# 新（独立仓库依赖，一条命令）
+pip install -e .
+```
+
+### 独立使用 llmclient
+
+```bash
+pip install "git+https://github.com/383827453-max/llmclient.git@v0.1.0"
+```
+
 ## [1.2.0] - 2026-09-21
 
 三项工程改进：抽出可复用客户端包、API Key 加密存储、多模型并发对比。

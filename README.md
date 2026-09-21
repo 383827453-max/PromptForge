@@ -29,19 +29,30 @@
 
 ## 仓库结构
 
-本仓库是 monorepo，含两个可独立安装的包：
+```
+promptforge/     # 桌面应用本体
+tools/           # e2e_check.py：本地 mock 网关端到端验证，无需 API Key
+tests/           # 测试套件
+```
 
-| 目录 | 包 | 说明 |
-|---|---|---|
-| `promptforge/` | `promptforge` | 桌面应用本体 |
-| `llmclient/` | `llmclient` | OpenAI 兼容接口客户端（无 GUI 依赖，可被其他项目复用） |
-| `tools/` | — | `e2e_check.py`：本地 mock 网关端到端验证，无需 API Key |
+`llmclient`（OpenAI 兼容接口客户端）已拆为独立项目，作为普通依赖引入：
+
+**https://github.com/383827453-max/llmclient**
+
+按 tag 钉住版本（见 `pyproject.toml`），它是 GUI 无关的纯 Python 库，
+可被其他项目直接复用。要改客户端行为请到那个仓库改，本仓库不再内嵌副本。
 
 ## 快速开始
 
 ```bash
-pip install -e ./llmclient        # 先装子包（未发布到 PyPI）
-pip install -r requirements.txt   # 或 pip install -e .
+pip install -e .        # llmclient 会作为 git 依赖自动拉取
+python run.py
+```
+
+或：
+
+```bash
+pip install -r requirements.txt
 python run.py
 ```
 
@@ -114,15 +125,12 @@ promptforge/                 # 桌面应用
     ├── dialogs.py           # 模板填充 / 编辑对话框
     └── workers.py           # QThread 工作线程（增强、连通性测试）
 
-llmclient/                   # 独立包：OpenAI 兼容客户端
-├── src/llmclient/
-│   ├── client.py            # LLMClient、ProbeResult
-│   ├── endpoints.py         # Base URL 归一化
-│   └── errors.py            # LLMError
-└── tests/
-
 tools/e2e_check.py           # 本地 mock 网关端到端验证
 ```
+
+`LLMClient` 的实现在独立仓库
+[383827453-max/llmclient](https://github.com/383827453-max/llmclient)，
+本仓库的 `promptforge/llm_client.py` 只是保留旧导入路径的转发层。
 
 ## 自定义策略
 
@@ -160,12 +168,10 @@ tools/e2e_check.py           # 本地 mock 网关端到端验证
 ## 开发
 
 ```bash
-pip install -e "./llmclient[dev]"
-pip install -e ".[dev]"
+pip install -e ".[dev]"          # llmclient 作为 git 依赖自动安装
 
-python -m pytest tests -v        # PromptForge 测试（含 offscreen GUI 冒烟）
-cd llmclient && python -m pytest tests -v && cd ..
-python -m ruff check promptforge tests tools llmclient/src llmclient/tests
+python -m pytest tests -v        # 测试（含 offscreen GUI 冒烟）
+python -m ruff check promptforge tests tools
 python tools/e2e_check.py        # 端到端：本地 mock 网关，无需 API Key
 ```
 
@@ -178,8 +184,22 @@ GUI 用例设置 `QT_QPA_PLATFORM=offscreen`，无需显示器。
 生效（墙钟 ≈ 最慢单请求，而非各请求之和）。
 
 CI 见 `.github/workflows/ci.yml`：Windows + Linux × Python 3.9/3.12/3.13
-矩阵跑两个包的测试 + e2e + ruff；main 分支推送时构建 exe 并做「启动后存活
-12 秒」的冒烟验证。
+矩阵跑测试 + e2e + ruff；main 分支推送时构建 exe 并做「启动后存活 12 秒」
+的冒烟验证。
+
+### 修改 LLMClient
+
+客户端实现在独立仓库 [llmclient](https://github.com/383827453-max/llmclient)：
+
+```bash
+git clone https://github.com/383827453-max/llmclient.git
+cd llmclient
+pip install -e ".[dev]"
+python -m pytest tests -v
+```
+
+改完发新版并打 tag，再更新本仓库 `pyproject.toml` 里的依赖 tag。
+本地联调时可以 `pip install -e /path/to/llmclient` 临时覆盖 git 依赖。
 
 ## 安全提示
 

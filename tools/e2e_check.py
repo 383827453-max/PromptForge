@@ -25,9 +25,8 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (_ROOT, os.path.join(_ROOT, "llmclient", "src")):
-    if os.path.isdir(_p) and _p not in sys.path:
-        sys.path.insert(0, _p)
+if os.path.isdir(_ROOT) and _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)   # 未安装时也能从仓库根跑
 
 from promptforge.compare import CompareRunner, diff_summary  # noqa: E402
 from promptforge.config import ApiConfig  # noqa: E402

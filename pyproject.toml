@@ -1,6 +1,6 @@
 [project]
 name = "promptforge"
-version = "1.2.0"
+version = "1.3.0"
 description = "提示词工坊 - 一键增强提示词的 Windows 桌面工具（PySide6 + OpenAI 兼容接口 + SQLite 历史）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,15 +19,10 @@ classifiers = [
 dependencies = [
     "PySide6>=6.5",
     "requests>=2.31",
+    # llmclient 是独立项目（未发布到 PyPI），按 tag 钉住以免上游改动
+    # 破坏本应用。升级时显式改这里的版本号。
+    "llmclient @ git+https://github.com/383827453-max/llmclient.git@v0.1.0",
 ]
-
-# 注意：本仓库是 monorepo，llmclient 是同仓库内的独立可安装包
-# （llmclient/，未发布到 PyPI）。安装顺序：
-#     pip install -e ./llmclient && pip install -e .
-# 或用 requirements.txt（已含 -e ./llmclient）。
-# 不列入 dependencies 是为了避免在 PyPI 上找不到该包导致安装失败；
-# promptforge/llm_client.py 内置了路径回退，从仓库根直接
-# `python run.py` 无需安装也能工作。
 
 [project.optional-dependencies]
 dev = [
