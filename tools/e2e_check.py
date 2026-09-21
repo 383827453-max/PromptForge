@@ -14,6 +14,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# 输出含中文，必须显式把 stdout/stderr 设为 UTF-8。
+# Windows 控制台默认码页可能是 cp1252（GitHub Actions runner 就是），
+# 直接 print 中文会抛 UnicodeEncodeError: 'charmap' codec can't encode...
+# errors='replace' 保证即使终端不支持也能跑完而不是中断。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_ROOT, os.path.join(_ROOT, "llmclient", "src")):
     if os.path.isdir(_p) and _p not in sys.path:
