@@ -18,6 +18,7 @@ _test_data/
 *.db
 settings.json
 user_templates.json
+credential.salt
 
 # 编辑器
 .vscode/

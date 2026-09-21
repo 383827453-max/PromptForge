@@ -7,6 +7,8 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional
 
+from .credential import decrypt_secret, encrypt_secret, is_encrypted
+
 APP_NAME = "PromptForge"
 
 
@@ -69,6 +71,13 @@ def _known_fields(cls, raw: dict) -> dict:
 
 
 def load_settings() -> Settings:
+    """读取配置。落盘的 api_key 是密文，这里解密成明文供运行时使用。
+
+    迁移与容错：
+    - 历史版本写的是明文 Key，`decrypt_secret` 原样返回，实现平滑升级；
+    - 换机器/换用户导致旧密文解不开时，该 profile 的 key 置空（用户重填），
+      其余配置项全部保留，绝不因为一个字段解不开就丢掉整份配置。
+    """
     path = _settings_path()
     if not os.path.exists(path):
         return Settings(profiles=[ApiConfig()])
@@ -78,10 +87,14 @@ def load_settings() -> Settings:
         if not isinstance(raw, dict):
             raise ValueError("settings.json 根节点必须是 JSON 对象")
         profiles_raw = raw.pop("profiles", None) or []
-        profiles = [
-            ApiConfig(**_known_fields(ApiConfig, p))
-            for p in profiles_raw if isinstance(p, dict)
-        ]
+        d = data_dir()
+        profiles = []
+        for p in profiles_raw:
+            if not isinstance(p, dict):
+                continue
+            cfg = ApiConfig(**_known_fields(ApiConfig, p))
+            cfg.api_key = decrypt_secret(cfg.api_key, salt_dir=d)
+            profiles.append(cfg)
         s = Settings(**_known_fields(Settings, raw))
         s.profiles = profiles or [ApiConfig()]
         if not 0 <= s.active_profile < len(s.profiles):
@@ -91,19 +104,75 @@ def load_settings() -> Settings:
         return Settings(profiles=[ApiConfig()])
 
 
+def _existing_stored_keys() -> dict:
+    """读出当前落盘的密文（profile 索引 → 密文），用于复用已加密值。"""
+    path = _settings_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            return {}
+    except Exception:
+        return {}
+    out = {}
+    for i, p in enumerate(raw.get("profiles") or []):
+        if isinstance(p, dict):
+            out[i] = str(p.get("api_key", "") or "")
+    return out
+
+
 def save_settings(s: Settings) -> None:
-    """原子写入：先写临时文件再替换。
+    """原子写入：先写临时文件再替换，api_key 加密后落盘。
 
     直接截断覆盖原文件时，若写入过程中断电/崩溃，配置会变成半截 JSON，
     下次启动 load_settings 只能降级为默认值，用户配置全部丢失。
+
+    密文复用：DPAPI 每次加密同一明文得到的密文都不同（内部带随机 IV）。
+    如果每次保存都重新加密，即使配置没变文件内容也会变——对用户表现为
+    「设置里点一下保存，文件就变了」，也让 git/备份 diff 全是噪音。
+    因此先解密已有密文比对：明文未变就沿用原密文，实现幂等保存。
+
+    注意必须同时要求 `is_encrypted(old_stored)`：历史版本落盘的是明文，
+    明文经 decrypt_secret 会原样返回，看起来"没变"，若不检查就会一直
+    沿用旧明文，迁移永远不生效（Key 永远以明文躺在磁盘上）。
     """
     path = _settings_path()
+    d = data_dir()
+    data = asdict(s)
+    prev = _existing_stored_keys()
+    for i, p in enumerate(data.get("profiles", [])):
+        if not isinstance(p, dict):
+            continue
+        plain = p.get("api_key", "") or ""
+        old_stored = prev.get(i, "")
+        if (plain and is_encrypted(old_stored)
+                and decrypt_secret(old_stored, salt_dir=d) == plain):
+            p["api_key"] = old_stored      # 明文没变，沿用原密文
+        else:
+            p["api_key"] = encrypt_secret(plain, salt_dir=d)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(asdict(s), f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+    _restrict_permissions(path)
+
+
+def _restrict_permissions(path: str) -> None:
+    """尽力把配置文件权限收紧到仅当前用户可读写。
+
+    Windows 上依赖 ACL 继承（用户目录默认已隔离）；POSIX 上显式 chmod 0600。
+    失败不影响功能——加密已经是主要防线，这里只是纵深防御。
+    """
+    if os.name == "nt":
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def mask_key(key: str) -> str:

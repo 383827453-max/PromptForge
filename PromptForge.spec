@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller 打包配置。
 
+注意 pathex 里显式加入 llmclient/src：PromptForge 依赖同仓库的 llmclient
+子包，打包机未必把它 pip install 到 site-packages（CI 里装了，本地可能没装），
+把源码路径直接告诉分析器最稳。
+"""
 
 a = Analysis(
     ['run.py'],
-    pathex=[],
+    pathex=['llmclient\\src'],
     binaries=[],
-    datas=[('promptforge\\strategies', 'promptforge\\strategies'), ('promptforge\\templates_builtin', 'promptforge\\templates_builtin'), ('assets', 'assets')],
-    hiddenimports=[],
+    datas=[
+        ('promptforge\\strategies', 'promptforge\\strategies'),
+        ('promptforge\\templates_builtin', 'promptforge\\templates_builtin'),
+        ('assets', 'assets'),
+    ],
+    hiddenimports=['llmclient', 'llmclient.client', 'llmclient.endpoints', 'llmclient.errors'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

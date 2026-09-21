@@ -34,8 +34,16 @@ from ..database import Database
 from ..enhancer import STRATEGIES, Enhancer, strategy_label
 from ..llm_client import LLMClient, LLMError, build_endpoint
 from ..templates import Template, add_user_template, delete_user_template, load_all
+from .compare_tab import CompareTab
 from .dialogs import TemplateEditDialog, TemplateFillDialog
 from .workers import EnhanceWorker, TestWorker
+
+# 标签页索引：避免在代码里散落魔法数字
+TAB_MAIN = 0
+TAB_COMPARE = 1
+TAB_HISTORY = 2
+TAB_TEMPLATES = 3
+TAB_SETTINGS = 4
 
 
 class MainWindow(QMainWindow):
@@ -53,6 +61,12 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         self.tabs.addTab(self._build_main_tab(), "一键增强")
+        self.compare_tab = CompareTab(
+            settings_provider=lambda: self.settings,
+            save_history=self._save_compare_history,
+            input_provider=lambda: self.input_edit.toPlainText(),
+        )
+        self.tabs.addTab(self.compare_tab, "多模型对比")
         self.tabs.addTab(self._build_history_tab(), "历史记录")
         self.tabs.addTab(self._build_templates_tab(), "模板库")
         self.tabs.addTab(self._build_settings_tab(), "设置")
@@ -350,7 +364,7 @@ class MainWindow(QMainWindow):
             self._hotkey_sc.activated.connect(self._focus_input)
 
     def _focus_input(self) -> None:
-        self.tabs.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(TAB_MAIN)
         self.input_edit.setFocus()
 
     def _paste_from_clipboard(self) -> None:
@@ -384,7 +398,7 @@ class MainWindow(QMainWindow):
             client = self._build_client()
         except LLMError as e:
             QMessageBox.warning(self, "配置错误", str(e))
-            self.tabs.setCurrentIndex(3)
+            self.tabs.setCurrentIndex(TAB_SETTINGS)
             return
         strategy = self.strategy_combo.currentData()
         extra = self.extra_edit.toPlainText().strip()
@@ -545,7 +559,7 @@ class MainWindow(QMainWindow):
         idx = self.strategy_combo.findData(t.strategy)
         if idx >= 0:
             self.strategy_combo.setCurrentIndex(idx)
-        self.tabs.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(TAB_MAIN)
 
     def _new_template(self) -> None:
         dlg = TemplateEditDialog(self)
@@ -615,6 +629,7 @@ class MainWindow(QMainWindow):
         self.settings.profiles.append(ApiConfig(name=f"配置{len(self.settings.profiles) + 1}"))
         self.settings.active_profile = len(self.settings.profiles) - 1
         self._load_settings_ui()
+        self.compare_tab.refresh_profiles()
 
     def _del_profile(self) -> None:
         if len(self.settings.profiles) <= 1:
@@ -624,6 +639,7 @@ class MainWindow(QMainWindow):
         self.settings.profiles.pop(idx)
         self.settings.active_profile = max(0, idx - 1)
         self._load_settings_ui()
+        self.compare_tab.refresh_profiles()
 
     def _save_settings(self) -> None:
         self._collect_profile_ui()
@@ -640,7 +656,15 @@ class MainWindow(QMainWindow):
         apply_current_theme(self.settings.theme)
         self._apply_hotkey()
         self._refresh_status_profile()
+        # 配置可能改了名称/地址，对比面板的勾选列表要同步
+        self.compare_tab.refresh_profiles()
         self.status.showMessage("设置已保存", 2000)
+
+    def _save_compare_history(self, strategy: str, original: str,
+                              enhanced: str, notes: str) -> None:
+        """对比面板选中的结果写入历史库。"""
+        self.db.add(strategy, original, enhanced, notes)
+        self.refresh_history()
 
     def _test_connection(self) -> None:
         self._collect_profile_ui()
@@ -691,5 +715,6 @@ class MainWindow(QMainWindow):
         t = self._test_worker
         if t is not None and t.isRunning():
             t.wait(1500)
+        self.compare_tab.stop()
         self.db.close()
         event.accept()

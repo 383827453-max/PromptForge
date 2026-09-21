@@ -19,13 +19,28 @@ def win(qapp):
 
 
 def test_main_window_constructs(win):
-    assert win.tabs.count() == 4
+    assert win.tabs.count() == 5
     assert win.windowTitle() == "PromptForge 提示词工坊"
 
 
 def test_tab_titles(win):
     titles = [win.tabs.tabText(i) for i in range(win.tabs.count())]
-    assert titles == ["一键增强", "历史记录", "模板库", "设置"]
+    assert titles == ["一键增强", "多模型对比", "历史记录", "模板库", "设置"]
+
+
+def test_tab_index_constants_match(win):
+    from promptforge.ui.main_window import (
+        TAB_COMPARE,
+        TAB_HISTORY,
+        TAB_MAIN,
+        TAB_SETTINGS,
+        TAB_TEMPLATES,
+    )
+    assert win.tabs.tabText(TAB_MAIN) == "一键增强"
+    assert win.tabs.tabText(TAB_COMPARE) == "多模型对比"
+    assert win.tabs.tabText(TAB_HISTORY) == "历史记录"
+    assert win.tabs.tabText(TAB_TEMPLATES) == "模板库"
+    assert win.tabs.tabText(TAB_SETTINGS) == "设置"
 
 
 def test_save_settings_does_not_crash_with_correct_import(win):
@@ -154,7 +169,7 @@ def test_enhance_with_bad_config_switches_to_settings(win, monkeypatch):
     win.settings.profiles = [ApiConfig()]
     win.input_edit.setPlainText("随便写点")
     win.on_enhance()
-    assert win.tabs.currentIndex() == 3
+    assert win.tabs.currentIndex() == 4  # TAB_SETTINGS
 
 
 def test_history_tab_lists_added_item(win):
